@@ -1,0 +1,129 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\AuditLog;
+use App\Models\LoginAttempt;
+use App\Models\SsoSession;
+use App\Services\SiakadAuthService;
+use App\Services\SsoService;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\View\View;
+
+class AuthController extends Controller
+{
+    public function __construct(
+        private readonly SiakadAuthService $siakadAuth,
+        private readonly SsoService $ssoService,
+    ) {}
+
+    public function showLogin(Request $request): View|RedirectResponse
+    {
+        $sessionId = $request->session()->get('sso_session_id');
+        if ($sessionId && ($ssoSession = SsoSession::find($sessionId)) && $ssoSession->isValid()) {
+            return redirect()->route('launcher');
+        }
+
+        return view('auth.login');
+    }
+
+    public function login(Request $request): RedirectResponse
+    {
+        $validated = $request->validate([
+            'username' => ['required', 'string', 'max:100'],
+            'password' => ['required', 'string', 'max:255'],
+        ]);
+
+        $username = trim($validated['username']);
+        $ip = $request->ip() ?? '0.0.0.0';
+
+        $userKey = 'sso-login:user:'.strtolower($username);
+        $ipKey = 'sso-login:ip:'.$ip;
+        $maxUser = config('sso.login.max_attempt_user', 5);
+        $maxIp = config('sso.login.max_attempt_ip', 20);
+        $lockSeconds = config('sso.login.lock_minutes', 15) * 60;
+
+        if (RateLimiter::tooManyAttempts($userKey, $maxUser) || RateLimiter::tooManyAttempts($ipKey, $maxIp)) {
+            AuditLog::record('LOGIN_RATE_LIMITED', null, null, ['username' => $username], $ip);
+
+            return back()
+                ->withInput(['username' => $username])
+                ->withErrors(['username' => 'Terlalu banyak percobaan login. Coba lagi beberapa menit lagi.']);
+        }
+
+        $user = $this->siakadAuth->findByUsername($username);
+        $passwordOk = $this->siakadAuth->verifyPassword($validated['password'], $user?->password);
+
+        if (! $user || ! $user->aktif || ! $passwordOk) {
+            RateLimiter::hit($userKey, $lockSeconds);
+            RateLimiter::hit($ipKey, $lockSeconds);
+
+            LoginAttempt::create([
+                'username' => $username,
+                'ip' => $ip,
+                'berhasil' => false,
+                'waktu' => now(),
+            ]);
+
+            AuditLog::record('LOGIN_GAGAL', $user?->id, null, ['username' => $username], $ip);
+
+            return back()
+                ->withInput(['username' => $username])
+                ->withErrors(['username' => 'Username atau password salah.']);
+        }
+
+        $apps = $this->ssoService->getUserAppsWithLevels((int) $user->id);
+        if ($apps->isEmpty()) {
+            AuditLog::record('LOGIN_DITOLAK_NO_ACCESS', (int) $user->id, null, ['username' => $username], $ip);
+
+            return back()
+                ->withInput(['username' => $username])
+                ->withErrors(['username' => 'Anda belum memiliki akses aplikasi. Hubungi administrator.']);
+        }
+
+        RateLimiter::clear($userKey);
+
+        LoginAttempt::create([
+            'username' => $username,
+            'ip' => $ip,
+            'berhasil' => true,
+            'waktu' => now(),
+        ]);
+
+        $request->session()->regenerate();
+
+        $ssoSession = SsoSession::create([
+            'id' => bin2hex(random_bytes(32)),
+            'siakad_user_id' => (int) $user->id,
+            'username' => $user->username,
+            'nama' => $user->nama,
+            'ip' => $ip,
+            'user_agent' => substr((string) $request->userAgent(), 0, 500),
+            'dibuat_pada' => now(),
+            'aktivitas_terakhir' => now(),
+        ]);
+
+        $request->session()->put('sso_session_id', $ssoSession->id);
+
+        AuditLog::record('LOGIN_OK', (int) $user->id, null, ['sso_session_id' => $ssoSession->id], $ip);
+
+        return redirect()->intended(route('launcher'));
+    }
+
+    public function logout(Request $request): RedirectResponse
+    {
+        $sessionId = $request->session()->get('sso_session_id');
+        if ($sessionId && ($ssoSession = SsoSession::find($sessionId))) {
+            $ssoSession->revoke();
+            $this->ssoService->sendBackchannelLogout($ssoSession);
+            AuditLog::record('LOGOUT', $ssoSession->siakad_user_id, null, ['sso_session_id' => $ssoSession->id], $request->ip());
+        }
+
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
+
+        return redirect()->route('login')->with('status', 'Anda telah keluar dari semua aplikasi.');
+    }
+}
