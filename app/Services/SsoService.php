@@ -23,9 +23,10 @@ class SsoService
         });
     }
 
-    public function getUserAppsWithLevels(int $siakadUserId): Collection
+    public function getUserAppsWithLevels(int $siakadUserId, string $tenantKey = 'default'): Collection
     {
         $levels = UserAppLevel::with('app')
+            ->where('tenant_key', $tenantKey)
             ->where('siakad_user_id', $siakadUserId)
             ->activeAndValid()
             ->whereHas('app', fn ($q) => $q->where('aktif', true))
@@ -42,9 +43,10 @@ class SsoService
         })->values();
     }
 
-    public function getUserLevelsForApp(int $siakadUserId, int $appId): array
+    public function getUserLevelsForApp(int $siakadUserId, int $appId, string $tenantKey = 'default'): array
     {
-        return UserAppLevel::where('siakad_user_id', $siakadUserId)
+        return UserAppLevel::where('tenant_key', $tenantKey)
+            ->where('siakad_user_id', $siakadUserId)
             ->where('app_id', $appId)
             ->activeAndValid()
             ->pluck('level')
@@ -52,7 +54,7 @@ class SsoService
             ->all();
     }
 
-    public function isAdminUser(int $siakadUserId): bool
+    public function isAdminUser(int $siakadUserId, string $tenantKey = 'default'): bool
     {
         $adminApp = App::where('kode', config('sso.admin_app_code', 'auth'))
             ->where('aktif', true)
@@ -62,7 +64,7 @@ class SsoService
             return false;
         }
 
-        $levels = $this->getUserLevelsForApp($siakadUserId, $adminApp->id);
+        $levels = $this->getUserLevelsForApp($siakadUserId, $adminApp->id, $tenantKey);
 
         return count(array_intersect($levels, config('sso.admin_levels', ['superadmin', 'admin']))) > 0;
     }
@@ -79,6 +81,7 @@ class SsoService
 
         SsoCode::create([
             'code_hash' => hash('sha256', $plainCode),
+            'tenant_key' => $session->tenant_key ?? 'default',
             'siakad_user_id' => $session->siakad_user_id,
             'app_id' => $app->id,
             'sso_session_id' => $session->id,
@@ -148,7 +151,8 @@ class SsoService
                 return ['error' => 'SSO session is no longer active.', 'aksi' => 'CODE_DITOLAK', 'user_id' => $ssoCode->siakad_user_id, 'detail' => ['reason' => 'session_inactive']];
             }
 
-            $levels = $this->getUserLevelsForApp($ssoCode->siakad_user_id, $app->id);
+            $tenantKey = $session->tenant_key ?? 'default';
+            $levels = $this->getUserLevelsForApp($ssoCode->siakad_user_id, $app->id, $tenantKey);
             if ($levels === []) {
                 return ['error' => 'User has no active access to this application.', 'aksi' => 'CODE_DITOLAK', 'user_id' => $ssoCode->siakad_user_id, 'detail' => ['reason' => 'no_access']];
             }
@@ -156,6 +160,7 @@ class SsoService
             return [
                 'ok' => true,
                 'payload' => [
+                    'tenant_key' => $tenantKey,
                     'siakad_user_id' => $ssoCode->siakad_user_id,
                     'username' => $session->username,
                     'nama' => $session->nama,

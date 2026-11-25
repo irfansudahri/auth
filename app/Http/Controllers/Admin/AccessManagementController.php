@@ -19,19 +19,24 @@ class AccessManagementController extends Controller
 
     public function index(Request $request): View
     {
+        /** @var SsoSession $ssoSession */
+        $ssoSession = $request->attributes->get('sso_session');
+        $tenantKey = $request->query('tenant_key', $ssoSession->tenant_key ?? 'default');
+
         $query = trim((string) $request->query('q', ''));
         $selectedUserId = $request->query('user_id') ? (int) $request->query('user_id') : null;
 
-        $users = $this->siakadAuth->searchUsers($query, 20);
-        $selectedUser = $selectedUserId ? $this->siakadAuth->findById($selectedUserId) : $users->first();
+        $users = $this->siakadAuth->searchUsers($query, 20, $tenantKey);
+        $selectedUser = $selectedUserId ? $this->siakadAuth->findById($selectedUserId, $tenantKey) : $users->first();
 
         $apps = App::where('aktif', true)->orderBy('nama')->get();
         $userLevels = $selectedUser
-            ? UserAppLevel::with('app')->where('siakad_user_id', $selectedUser->id)->orderBy('app_id')->get()
+            ? UserAppLevel::with('app')->where('tenant_key', $tenantKey)->where('siakad_user_id', $selectedUser->id)->orderBy('app_id')->get()
             : collect();
 
         return view('admin.access', [
-            'ssoSession' => $request->attributes->get('sso_session'),
+            'ssoSession' => $ssoSession,
+            'tenantKey' => $tenantKey,
             'query' => $query,
             'users' => $users,
             'selectedUser' => $selectedUser,
@@ -46,15 +51,18 @@ class AccessManagementController extends Controller
         $ssoSession = $request->attributes->get('sso_session');
 
         $validated = $request->validate([
+            'tenant_key' => ['nullable', 'string', 'max:100'],
             'siakad_user_id' => ['required', 'integer', 'min:1'],
             'app_id' => ['required', 'integer', 'exists:apps,id'],
             'level' => ['required', 'string', 'max:50'],
             'berlaku_sampai' => ['nullable', 'date'],
         ]);
 
+        $tenantKey = trim((string) ($validated['tenant_key'] ?? '')) ?: ($ssoSession->tenant_key ?? 'default');
         $levelName = strtolower(trim($validated['level']));
 
-        $existing = UserAppLevel::where('siakad_user_id', $validated['siakad_user_id'])
+        $existing = UserAppLevel::where('tenant_key', $tenantKey)
+            ->where('siakad_user_id', $validated['siakad_user_id'])
             ->where('app_id', $validated['app_id'])
             ->where('level', $levelName)
             ->first();
@@ -63,6 +71,7 @@ class AccessManagementController extends Controller
 
         $record = UserAppLevel::updateOrCreate(
             [
+                'tenant_key' => $tenantKey,
                 'siakad_user_id' => $validated['siakad_user_id'],
                 'app_id' => $validated['app_id'],
                 'level' => $levelName,

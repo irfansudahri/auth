@@ -63,10 +63,12 @@ class SsoApiController extends Controller
             ]);
         }
 
-        $levels = $this->ssoService->getUserLevelsForApp($ssoSession->siakad_user_id, $app->id);
+        $tenantKey = $ssoSession->tenant_key ?? 'default';
+        $levels = $this->ssoService->getUserLevelsForApp($ssoSession->siakad_user_id, $app->id, $tenantKey);
 
         return response()->json([
             'aktif' => $levels !== [],
+            'tenant_key' => $tenantKey,
             'levels' => $levels,
         ]);
     }

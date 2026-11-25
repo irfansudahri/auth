@@ -13,6 +13,7 @@ class AuditLog extends Model
 
     protected $fillable = [
         'waktu',
+        'tenant_key',
         'siakad_user_id',
         'app_id',
         'aksi',
@@ -38,10 +39,12 @@ class AuditLog extends Model
         ?int $siakadUserId = null,
         ?int $appId = null,
         array $detail = [],
-        ?string $ip = null
+        ?string $ip = null,
+        ?string $tenantKey = null
     ): self {
         return self::create([
             'waktu' => now(),
+            'tenant_key' => $tenantKey ?? config('sso.multi_tenant.default_tenant', 'default'),
             'siakad_user_id' => $siakadUserId,
             'app_id' => $appId,
             'aksi' => $aksi,

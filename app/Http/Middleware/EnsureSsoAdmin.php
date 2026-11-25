@@ -16,7 +16,7 @@ class EnsureSsoAdmin
     {
         /** @var SsoSession|null $ssoSession */
         $ssoSession = $request->attributes->get('sso_session');
-        if (! $ssoSession || ! $this->ssoService->isAdminUser($ssoSession->siakad_user_id)) {
+        if (! $ssoSession || ! $this->ssoService->isAdminUser($ssoSession->siakad_user_id, $ssoSession->tenant_key ?? 'default')) {
             abort(403, 'Anda tidak memiliki hak akses administrator SSO.');
         }
 

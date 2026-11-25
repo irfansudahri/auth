@@ -11,6 +11,7 @@ class LoginAttempt extends Model
     public $timestamps = false;
 
     protected $fillable = [
+        'tenant_key',
         'username',
         'ip',
         'berhasil',

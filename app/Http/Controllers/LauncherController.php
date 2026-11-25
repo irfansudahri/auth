@@ -18,12 +18,14 @@ class LauncherController extends Controller
     {
         /** @var SsoSession $ssoSession */
         $ssoSession = $request->attributes->get('sso_session');
-        $apps = $this->ssoService->getUserAppsWithLevels($ssoSession->siakad_user_id);
-        $isAdmin = $this->ssoService->isAdminUser($ssoSession->siakad_user_id);
+        $tenantKey = $ssoSession->tenant_key ?? 'default';
+        $apps = $this->ssoService->getUserAppsWithLevels($ssoSession->siakad_user_id, $tenantKey);
+        $isAdmin = $this->ssoService->isAdminUser($ssoSession->siakad_user_id, $tenantKey);
 
         $totalLevels = $apps->sum(fn ($item) => count($item->levels));
         $activeAppSessions = $ssoSession->appSessions()->count();
         $recentLogs = AuditLog::with('app')
+            ->where('tenant_key', $tenantKey)
             ->where('siakad_user_id', $ssoSession->siakad_user_id)
             ->orderByDesc('waktu')
             ->limit(5)
@@ -50,7 +52,8 @@ class LauncherController extends Controller
             abort(404, 'Aplikasi tidak ditemukan atau tidak aktif.');
         }
 
-        $levels = $this->ssoService->getUserLevelsForApp($ssoSession->siakad_user_id, $app->id);
+        $tenantKey = $ssoSession->tenant_key ?? 'default';
+        $levels = $this->ssoService->getUserLevelsForApp($ssoSession->siakad_user_id, $app->id, $tenantKey);
         if ($levels === []) {
             abort(403, 'Anda tidak memiliki akses ke aplikasi ini.');
         }
@@ -96,7 +99,8 @@ class LauncherController extends Controller
             abort(400, 'Metode PKCE yang didukung hanya S256.');
         }
 
-        $levels = $this->ssoService->getUserLevelsForApp($ssoSession->siakad_user_id, $app->id);
+        $tenantKey = $ssoSession->tenant_key ?? 'default';
+        $levels = $this->ssoService->getUserLevelsForApp($ssoSession->siakad_user_id, $app->id, $tenantKey);
         if ($levels === []) {
             AuditLog::record('CODE_DITOLAK', $ssoSession->siakad_user_id, $app->id, [
                 'reason' => 'no_app_access',

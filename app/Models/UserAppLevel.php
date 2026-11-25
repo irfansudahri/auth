@@ -11,6 +11,7 @@ class UserAppLevel extends Model
     protected $table = 'user_app_level';
 
     protected $fillable = [
+        'tenant_key',
         'siakad_user_id',
         'app_id',
         'level',

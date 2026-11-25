@@ -9,11 +9,11 @@ class SiakadAuthService
 {
     private const DUMMY_BCRYPT = '$2y$12$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ012345';
 
-    public function findByUsername(string $username): ?object
+    public function findByUsername(string $username, ?string $tenantDb = null): ?object
     {
         $cols = config('sso.siakad.columns');
 
-        $row = $this->baseQuery()
+        $row = $this->baseQuery($tenantDb)
             ->select([
                 "{$cols['id']} as id",
                 "{$cols['username']} as username",
@@ -28,11 +28,11 @@ class SiakadAuthService
         return $row ?: null;
     }
 
-    public function findById(int $id): ?object
+    public function findById(int $id, ?string $tenantDb = null): ?object
     {
         $cols = config('sso.siakad.columns');
 
-        $row = $this->baseQuery()
+        $row = $this->baseQuery($tenantDb)
             ->select([
                 "{$cols['id']} as id",
                 "{$cols['username']} as username",
@@ -46,11 +46,11 @@ class SiakadAuthService
         return $row ?: null;
     }
 
-    public function searchUsers(string $query = '', int $limit = 25): Collection
+    public function searchUsers(string $query = '', int $limit = 25, ?string $tenantDb = null): Collection
     {
         $cols = config('sso.siakad.columns');
 
-        $builder = $this->baseQuery()
+        $builder = $this->baseQuery($tenantDb)
             ->select([
                 "{$cols['id']} as id",
                 "{$cols['username']} as username",
@@ -93,13 +93,19 @@ class SiakadAuthService
         return password_verify($plainPassword, $storedHash);
     }
 
-    private function baseQuery()
+    private function baseQuery(?string $tenantDb = null)
     {
         if (config('sso.siakad.driver') === 'demo') {
             return DB::table('demo_siakad_users');
         }
 
-        return DB::connection(config('sso.siakad.connection'))
+        $connName = config('sso.siakad.connection');
+        if ($tenantDb && $tenantDb !== 'default') {
+            config(["database.connections.{$connName}.database" => $tenantDb]);
+            DB::purge($connName);
+        }
+
+        return DB::connection($connName)
             ->table(config('sso.siakad.table'));
     }
 }

@@ -41,7 +41,7 @@
                 <span>Dashboard &amp; Launcher</span>
             </a>
 
-            @if(app(\App\Services\SsoService::class)->isAdminUser($ssoSession->siakad_user_id))
+            @if(app(\App\Services\SsoService::class)->isAdminUser($ssoSession->siakad_user_id, $ssoSession->tenant_key ?? 'default'))
                 <div class="ta-nav-label">Administrasi SSO</div>
                 <a href="{{ route('admin.access.index') }}" class="ta-nav-link {{ request()->routeIs('admin.access.*') ? 'active' : '' }}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">

@@ -17,6 +17,7 @@ class SsoSession extends Model
 
     protected $fillable = [
         'id',
+        'tenant_key',
         'siakad_user_id',
         'username',
         'nama',

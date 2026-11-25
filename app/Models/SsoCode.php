@@ -19,6 +19,7 @@ class SsoCode extends Model
 
     protected $fillable = [
         'code_hash',
+        'tenant_key',
         'siakad_user_id',
         'app_id',
         'sso_session_id',

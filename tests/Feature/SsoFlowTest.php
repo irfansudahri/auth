@@ -16,7 +16,10 @@ class SsoFlowTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        config(['sso.siakad.driver' => 'demo']);
+        config([
+            'sso.siakad.driver' => 'demo',
+            'sso.multi_tenant.enabled' => false,
+        ]);
         $this->seed(DatabaseSeeder::class);
     }
 
@@ -158,8 +161,11 @@ class SsoFlowTest extends TestCase
             'levels' => ['dosen', 'kaprodi'],
         ]);
 
-        // Logout triggers HMAC-signed back-channel POST
-        $this->post('/logout')->assertRedirect('/login');
+        // GET /logout without matching sid shows confirmation page (CSRF safe)
+        $this->get('/logout')->assertOk()->assertSee('Keluar dari Semua Aplikasi?');
+
+        // GET /logout?sid=<matching> triggers Single Logout + HMAC back-channel POST
+        $this->get('/logout?sid='.$ssoSessionId)->assertRedirect('/login');
 
         Http::assertSent(function ($request) {
             $expectedSig = hash_hmac('sha256', $request->body(), 'obe-hmac-secret-dev');
@@ -208,5 +214,31 @@ class SsoFlowTest extends TestCase
         $this->assertDatabaseHas('apps', ['kode' => 'simpeg', 'aktif' => true]);
         $app = App::where('kode', 'simpeg')->first();
         $this->assertNotNull($app->hmac_secret_encrypted);
+    }
+
+    public function test_multi_tenant_isolation_keeps_same_user_id_separate(): void
+    {
+        $kelasApp = App::where('kode', 'kelas')->firstOrFail();
+        $ssoService = app(\App\Services\SsoService::class);
+
+        \App\Models\UserAppLevel::create([
+            'tenant_key' => 'dbsiakad_stikomtb',
+            'siakad_user_id' => 99,
+            'app_id' => $kelasApp->id,
+            'level' => 'dosen',
+            'aktif' => true,
+        ]);
+
+        \App\Models\UserAppLevel::create([
+            'tenant_key' => 'dbsiakad_binakarya',
+            'siakad_user_id' => 99,
+            'app_id' => $kelasApp->id,
+            'level' => 'mahasiswa',
+            'aktif' => true,
+        ]);
+
+        $this->assertSame(['dosen'], $ssoService->getUserLevelsForApp(99, $kelasApp->id, 'dbsiakad_stikomtb'));
+        $this->assertSame(['mahasiswa'], $ssoService->getUserLevelsForApp(99, $kelasApp->id, 'dbsiakad_binakarya'));
+        $this->assertSame([], $ssoService->getUserLevelsForApp(99, $kelasApp->id, 'dbsiakad_irchiwi'));
     }
 }

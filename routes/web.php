@@ -15,6 +15,7 @@ Route::middleware('sso.auth')->group(function () {
     Route::get('/', [LauncherController::class, 'index'])->name('launcher');
     Route::get('/open/{kode}', [LauncherController::class, 'open'])->name('open');
     Route::get('/authorize', [LauncherController::class, 'authorizeApp'])->name('authorize');
+    Route::get('/logout', [AuthController::class, 'logoutPrompt'])->name('logout.get');
     Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
 
     // Admin panel (requires superadmin/admin level on 'auth' app)

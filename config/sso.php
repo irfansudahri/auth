@@ -39,4 +39,11 @@ return [
 
     'admin_app_code' => env('SSO_ADMIN_APP_CODE', 'auth'),
     'admin_levels' => ['superadmin', 'admin'],
+
+    'multi_tenant' => [
+        'enabled' => (bool) env('SSO_MULTI_TENANT', false),
+        'connection' => env('MASTER_KAMPUS_DB_CONNECTION', 'master_kampus'),
+        'table' => env('MASTER_KAMPUS_TENANT_TABLE', 'tenant'),
+        'default_tenant' => env('SSO_DEFAULT_TENANT', 'default'),
+    ],
 ];

@@ -7,6 +7,7 @@ use App\Models\LoginAttempt;
 use App\Models\SsoSession;
 use App\Services\SiakadAuthService;
 use App\Services\SsoService;
+use App\Services\TenantService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -17,6 +18,7 @@ class AuthController extends Controller
     public function __construct(
         private readonly SiakadAuthService $siakadAuth,
         private readonly SsoService $ssoService,
+        private readonly TenantService $tenantService,
     ) {}
 
     public function showLogin(Request $request): View|RedirectResponse
@@ -26,34 +28,43 @@ class AuthController extends Controller
             return redirect()->route('launcher');
         }
 
-        return view('auth.login');
+        return view('auth.login', [
+            'campuses' => $this->tenantService->listCampuses(),
+        ]);
     }
 
     public function login(Request $request): RedirectResponse
     {
         $validated = $request->validate([
+            'tenant_key' => ['nullable', 'string', 'max:100'],
             'username' => ['required', 'string', 'max:100'],
             'password' => ['required', 'string', 'max:255'],
         ]);
 
+        $tenantKey = trim((string) ($validated['tenant_key'] ?? '')) ?: config('sso.multi_tenant.default_tenant', 'default');
+        $campuses = $this->tenantService->listCampuses();
+        if ($campuses->isNotEmpty() && ! $campuses->contains('tenant_key', $tenantKey)) {
+            return back()->withInput(['username' => $validated['username']])->withErrors(['tenant_key' => 'Kampus / tenant tidak valid atau tidak aktif.']);
+        }
+
         $username = trim($validated['username']);
         $ip = $request->ip() ?? '0.0.0.0';
 
-        $userKey = 'sso-login:user:'.strtolower($username);
+        $userKey = 'sso-login:user:'.$tenantKey.':'.strtolower($username);
         $ipKey = 'sso-login:ip:'.$ip;
         $maxUser = config('sso.login.max_attempt_user', 5);
         $maxIp = config('sso.login.max_attempt_ip', 20);
         $lockSeconds = config('sso.login.lock_minutes', 15) * 60;
 
         if (RateLimiter::tooManyAttempts($userKey, $maxUser) || RateLimiter::tooManyAttempts($ipKey, $maxIp)) {
-            AuditLog::record('LOGIN_RATE_LIMITED', null, null, ['username' => $username], $ip);
+            AuditLog::record('LOGIN_RATE_LIMITED', null, null, ['username' => $username], $ip, $tenantKey);
 
             return back()
-                ->withInput(['username' => $username])
+                ->withInput(['username' => $username, 'tenant_key' => $tenantKey])
                 ->withErrors(['username' => 'Terlalu banyak percobaan login. Coba lagi beberapa menit lagi.']);
         }
 
-        $user = $this->siakadAuth->findByUsername($username);
+        $user = $this->siakadAuth->findByUsername($username, $tenantKey);
         $passwordOk = $this->siakadAuth->verifyPassword($validated['password'], $user?->password);
 
         if (! $user || ! $user->aktif || ! $passwordOk) {
@@ -61,31 +72,33 @@ class AuthController extends Controller
             RateLimiter::hit($ipKey, $lockSeconds);
 
             LoginAttempt::create([
+                'tenant_key' => $tenantKey,
                 'username' => $username,
                 'ip' => $ip,
                 'berhasil' => false,
                 'waktu' => now(),
             ]);
 
-            AuditLog::record('LOGIN_GAGAL', $user?->id, null, ['username' => $username], $ip);
+            AuditLog::record('LOGIN_GAGAL', $user?->id, null, ['username' => $username], $ip, $tenantKey);
 
             return back()
-                ->withInput(['username' => $username])
+                ->withInput(['username' => $username, 'tenant_key' => $tenantKey])
                 ->withErrors(['username' => 'Username atau password salah.']);
         }
 
-        $apps = $this->ssoService->getUserAppsWithLevels((int) $user->id);
+        $apps = $this->ssoService->getUserAppsWithLevels((int) $user->id, $tenantKey);
         if ($apps->isEmpty()) {
-            AuditLog::record('LOGIN_DITOLAK_NO_ACCESS', (int) $user->id, null, ['username' => $username], $ip);
+            AuditLog::record('LOGIN_DITOLAK_NO_ACCESS', (int) $user->id, null, ['username' => $username], $ip, $tenantKey);
 
             return back()
-                ->withInput(['username' => $username])
+                ->withInput(['username' => $username, 'tenant_key' => $tenantKey])
                 ->withErrors(['username' => 'Anda belum memiliki akses aplikasi. Hubungi administrator.']);
         }
 
         RateLimiter::clear($userKey);
 
         LoginAttempt::create([
+            'tenant_key' => $tenantKey,
             'username' => $username,
             'ip' => $ip,
             'berhasil' => true,
@@ -96,6 +109,7 @@ class AuthController extends Controller
 
         $ssoSession = SsoSession::create([
             'id' => bin2hex(random_bytes(32)),
+            'tenant_key' => $tenantKey,
             'siakad_user_id' => (int) $user->id,
             'username' => $user->username,
             'nama' => $user->nama,
@@ -107,9 +121,28 @@ class AuthController extends Controller
 
         $request->session()->put('sso_session_id', $ssoSession->id);
 
-        AuditLog::record('LOGIN_OK', (int) $user->id, null, ['sso_session_id' => $ssoSession->id], $ip);
+        AuditLog::record('LOGIN_OK', (int) $user->id, null, ['sso_session_id' => $ssoSession->id], $ip, $tenantKey);
 
         return redirect()->intended(route('launcher'));
+    }
+
+    public function logoutPrompt(Request $request): View|RedirectResponse
+    {
+        $sessionId = (string) $request->session()->get('sso_session_id', '');
+        $sidHint = (string) $request->query('sid', '');
+
+        if ($sessionId !== '' && $sidHint !== '' && hash_equals($sessionId, $sidHint)) {
+            return $this->logout($request);
+        }
+
+        $ssoSession = $sessionId !== '' ? SsoSession::find($sessionId) : null;
+        if (! $ssoSession || ! $ssoSession->isValid()) {
+            return redirect()->route('login');
+        }
+
+        return view('auth.logout-confirm', [
+            'ssoSession' => $ssoSession,
+        ]);
     }
 
     public function logout(Request $request): RedirectResponse
