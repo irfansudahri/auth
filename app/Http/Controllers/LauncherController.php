@@ -6,13 +6,17 @@ use App\Models\App;
 use App\Models\AuditLog;
 use App\Models\SsoSession;
 use App\Services\SsoService;
+use App\Services\TenantService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
 
 class LauncherController extends Controller
 {
-    public function __construct(private readonly SsoService $ssoService) {}
+    public function __construct(
+        private readonly SsoService $ssoService,
+        private readonly TenantService $tenantService,
+    ) {}
 
     public function index(Request $request): View
     {
@@ -58,8 +62,9 @@ class LauncherController extends Controller
             abort(403, 'Anda tidak memiliki akses ke aplikasi ini.');
         }
 
-        // Redirect to client app's /sso/login so the client generates its own CSRF state
-        $target = rtrim($app->base_url, '/').'/sso/login';
+        // Redirect to client app's /sso/login (resolved per tenant from master_kampus if available)
+        $baseUrl = $this->tenantService->resolveBaseUrl($tenantKey, $app->kode, $app->base_url);
+        $target = rtrim($baseUrl, '/').'/sso/login';
         $returnTo = $this->ssoService->sanitizeReturnTo($request->query('return_to'));
         if ($returnTo !== null) {
             $target .= '?return_to='.urlencode($returnTo);
@@ -72,6 +77,7 @@ class LauncherController extends Controller
     {
         /** @var SsoSession $ssoSession */
         $ssoSession = $request->attributes->get('sso_session');
+        $tenantKey = $ssoSession->tenant_key ?? 'default';
 
         $clientId = (string) $request->query('client_id', '');
         $redirectUri = (string) $request->query('redirect_uri', '');
@@ -82,7 +88,15 @@ class LauncherController extends Controller
         /** @var App|null $app */
         $app = App::where('client_id', $clientId)->where('aktif', true)->first();
 
-        if (! $app || $redirectUri === '' || ! hash_equals($app->redirect_uri, $redirectUri)) {
+        $tenantBaseUrl = $app ? $this->tenantService->resolveBaseUrl($tenantKey, $app->kode, $app->base_url) : '';
+        $tenantRedirectUri = $tenantBaseUrl !== '' ? rtrim($tenantBaseUrl, '/').'/sso/callback' : '';
+
+        $redirectValid = $app && $redirectUri !== '' && (
+            hash_equals($app->redirect_uri, $redirectUri)
+            || ($tenantRedirectUri !== '' && hash_equals($tenantRedirectUri, $redirectUri))
+        );
+
+        if (! $redirectValid) {
             AuditLog::record('CODE_DITOLAK', $ssoSession->siakad_user_id, $app?->id, [
                 'reason' => 'invalid_client_or_redirect_uri',
                 'client_id' => $clientId,
