@@ -28,9 +28,7 @@ class AuthController extends Controller
             return redirect()->route('launcher');
         }
 
-        return view('auth.login', [
-            'campuses' => $this->tenantService->listCampuses(),
-        ]);
+        return view('auth.login');
     }
 
     public function login(Request $request): RedirectResponse
@@ -41,31 +39,48 @@ class AuthController extends Controller
             'password' => ['required', 'string', 'max:255'],
         ]);
 
-        $tenantKey = trim((string) ($validated['tenant_key'] ?? '')) ?: config('sso.multi_tenant.default_tenant', 'default');
-        $campuses = $this->tenantService->listCampuses();
-        if ($campuses->isNotEmpty() && ! $campuses->contains('tenant_key', $tenantKey)) {
-            return back()->withInput(['username' => $validated['username']])->withErrors(['tenant_key' => 'Kampus / tenant tidak valid atau tidak aktif.']);
-        }
-
         $username = trim($validated['username']);
         $ip = $request->ip() ?? '0.0.0.0';
+        $defaultTenant = config('sso.multi_tenant.default_tenant', 'default');
+        $requestedTenant = trim((string) ($validated['tenant_key'] ?? ''));
 
-        $userKey = 'sso-login:user:'.$tenantKey.':'.strtolower($username);
         $ipKey = 'sso-login:ip:'.$ip;
+        $userKey = 'sso-login:user:'.($requestedTenant ?: $defaultTenant).':'.strtolower($username);
         $maxUser = config('sso.login.max_attempt_user', 5);
         $maxIp = config('sso.login.max_attempt_ip', 20);
         $lockSeconds = config('sso.login.lock_minutes', 15) * 60;
 
         if (RateLimiter::tooManyAttempts($userKey, $maxUser) || RateLimiter::tooManyAttempts($ipKey, $maxIp)) {
-            AuditLog::record('LOGIN_RATE_LIMITED', null, null, ['username' => $username], $ip, $tenantKey);
+            AuditLog::record('LOGIN_RATE_LIMITED', null, null, ['username' => $username], $ip, $requestedTenant ?: $defaultTenant);
 
             return back()
-                ->withInput(['username' => $username, 'tenant_key' => $tenantKey])
+                ->withInput(['username' => $username])
                 ->withErrors(['username' => 'Terlalu banyak percobaan login. Coba lagi beberapa menit lagi.']);
         }
 
-        $user = $this->siakadAuth->findByUsername($username, $tenantKey);
-        $passwordOk = $this->siakadAuth->verifyPassword($validated['password'], $user?->password);
+        $tenantKey = $requestedTenant ?: $defaultTenant;
+        $user = null;
+        $passwordOk = false;
+
+        if ($requestedTenant === '' && $this->tenantService->isEnabled() && config('sso.siakad.driver') === 'database') {
+            $campuses = $this->tenantService->listCampuses();
+            foreach ($campuses as $campus) {
+                $candidate = $this->siakadAuth->findByUsername($username, $campus->tenant_key);
+                if ($candidate && $candidate->aktif && $this->siakadAuth->verifyPassword($validated['password'], $candidate->password)) {
+                    $user = $candidate;
+                    $tenantKey = $campus->tenant_key;
+                    $passwordOk = true;
+                    break;
+                }
+            }
+            if (! $user) {
+                // Timing-safe dummy check
+                $this->siakadAuth->verifyPassword($validated['password'], null);
+            }
+        } else {
+            $user = $this->siakadAuth->findByUsername($username, $tenantKey);
+            $passwordOk = $this->siakadAuth->verifyPassword($validated['password'], $user?->password);
+        }
 
         if (! $user || ! $user->aktif || ! $passwordOk) {
             RateLimiter::hit($userKey, $lockSeconds);
@@ -82,7 +97,7 @@ class AuthController extends Controller
             AuditLog::record('LOGIN_GAGAL', $user?->id, null, ['username' => $username], $ip, $tenantKey);
 
             return back()
-                ->withInput(['username' => $username, 'tenant_key' => $tenantKey])
+                ->withInput(['username' => $username])
                 ->withErrors(['username' => 'Username atau password salah.']);
         }
 

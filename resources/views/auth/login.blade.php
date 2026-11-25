@@ -31,18 +31,6 @@
 
         <form method="POST" action="{{ route('login.post') }}">
             @csrf
-            @if(isset($campuses) && $campuses->isNotEmpty())
-                <div style="margin-bottom: 1rem;">
-                    <label for="tenant_key" class="ta-label">Kampus / Tenant</label>
-                    <select id="tenant_key" name="tenant_key" class="ta-input" required>
-                        @foreach($campuses as $campus)
-                            <option value="{{ $campus->tenant_key }}" {{ old('tenant_key') === $campus->tenant_key ? 'selected' : '' }}>
-                                {{ $campus->label }} ({{ $campus->tenant_key }})
-                            </option>
-                        @endforeach
-                    </select>
-                </div>
-            @endif
             <div style="margin-bottom: 1rem;">
                 <label for="username" class="ta-label">Username Siakad</label>
                 <input type="text" id="username" name="username" class="ta-input" value="{{ old('username') }}" placeholder="Masukkan username" required autofocus autocomplete="username">
