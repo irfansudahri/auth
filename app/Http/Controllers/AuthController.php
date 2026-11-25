@@ -62,7 +62,24 @@ class AuthController extends Controller
         $user = null;
         $passwordOk = false;
 
-        if ($requestedTenant === '' && $this->tenantService->isEnabled() && config('sso.siakad.driver') === 'database') {
+        if ($requestedTenant === '' && config('sso.siakad.driver') === 'synced') {
+            $candidates = \Illuminate\Support\Facades\DB::table('siakad_users')
+                ->selectRaw("id, tenant_key, userid as username, password, nama_lengkap as nama, (blokir = 'N') as aktif")
+                ->where('userid', $username)
+                ->get();
+
+            foreach ($candidates as $candidate) {
+                if ($candidate->aktif && $this->siakadAuth->verifyPassword($validated['password'], $candidate->password)) {
+                    $user = $candidate;
+                    $tenantKey = $candidate->tenant_key;
+                    $passwordOk = true;
+                    break;
+                }
+            }
+            if (! $user) {
+                $this->siakadAuth->verifyPassword($validated['password'], null);
+            }
+        } elseif ($requestedTenant === '' && $this->tenantService->isEnabled() && config('sso.siakad.driver') === 'database') {
             $campuses = $this->tenantService->listCampuses();
             foreach ($campuses as $campus) {
                 try {

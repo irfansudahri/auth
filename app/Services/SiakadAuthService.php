@@ -11,6 +11,18 @@ class SiakadAuthService
 
     public function findByUsername(string $username, ?string $tenantDb = null): ?object
     {
+        if (config('sso.siakad.driver') === 'synced') {
+            $query = DB::table('siakad_users')
+                ->selectRaw("id, tenant_key, userid as username, password, nama_lengkap as nama, NULL as email, (blokir = 'N') as aktif")
+                ->where('userid', $username);
+
+            if ($tenantDb && $tenantDb !== 'default') {
+                $query->where('tenant_key', $tenantDb);
+            }
+
+            return $query->first() ?: null;
+        }
+
         $cols = config('sso.siakad.columns');
 
         $row = $this->baseQuery($tenantDb)
@@ -30,6 +42,13 @@ class SiakadAuthService
 
     public function findById(int $id, ?string $tenantDb = null): ?object
     {
+        if (config('sso.siakad.driver') === 'synced') {
+            return DB::table('siakad_users')
+                ->selectRaw("id, tenant_key, userid as username, nama_lengkap as nama, NULL as email, (blokir = 'N') as aktif")
+                ->where('id', $id)
+                ->first() ?: null;
+        }
+
         $cols = config('sso.siakad.columns');
 
         $row = $this->baseQuery($tenantDb)
@@ -48,6 +67,24 @@ class SiakadAuthService
 
     public function searchUsers(string $query = '', int $limit = 25, ?string $tenantDb = null): Collection
     {
+        if (config('sso.siakad.driver') === 'synced') {
+            $builder = DB::table('siakad_users')
+                ->selectRaw("id, tenant_key, userid as username, nama_lengkap as nama, NULL as email, (blokir = 'N') as aktif");
+
+            if ($tenantDb && $tenantDb !== 'default') {
+                $builder->where('tenant_key', $tenantDb);
+            }
+
+            if ($query !== '') {
+                $builder->where(function ($q) use ($query) {
+                    $q->where('userid', 'like', "%{$query}%")
+                        ->orWhere('nama_lengkap', 'like', "%{$query}%");
+                });
+            }
+
+            return $builder->orderBy('nama_lengkap')->limit($limit)->get();
+        }
+
         $cols = config('sso.siakad.columns');
 
         $builder = $this->baseQuery($tenantDb)
