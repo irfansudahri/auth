@@ -65,7 +65,11 @@ class AuthController extends Controller
         if ($requestedTenant === '' && $this->tenantService->isEnabled() && config('sso.siakad.driver') === 'database') {
             $campuses = $this->tenantService->listCampuses();
             foreach ($campuses as $campus) {
-                $candidate = $this->siakadAuth->findByUsername($username, $campus->tenant_key);
+                try {
+                    $candidate = $this->siakadAuth->findByUsername($username, $campus->tenant_key);
+                } catch (\Throwable) {
+                    continue;
+                }
                 if ($candidate && $candidate->aktif && $this->siakadAuth->verifyPassword($validated['password'], $candidate->password)) {
                     $user = $candidate;
                     $tenantKey = $campus->tenant_key;

@@ -25,7 +25,7 @@ class TenantService
             return collect();
         }
 
-        return Cache::remember('sso:master_kampus:campuses', 60, function () {
+        $cached = Cache::remember('sso:master_kampus:campuses_v2', 60, function (): array {
             try {
                 $rows = DB::connection(config('sso.multi_tenant.connection', 'master_kampus'))
                     ->table(config('sso.multi_tenant.table', 'tenant'))
@@ -35,7 +35,7 @@ class TenantService
                     ->orderBy('nama_kampus')
                     ->get();
 
-                return $rows->groupBy('siakad_name')->map(function (Collection $group, string $siakadName) {
+                return $rows->groupBy('siakad_name')->map(function (Collection $group, string $siakadName): array {
                     $apps = [];
                     foreach ($group as $row) {
                         $apps[strtolower((string) $row->app)] = (string) $row->host;
@@ -43,16 +43,18 @@ class TenantService
 
                     $firstLabel = $group->pluck('nama_kampus')->filter()->first() ?: $siakadName;
 
-                    return (object) [
+                    return [
                         'tenant_key' => $siakadName,
                         'label' => $firstLabel,
                         'apps' => $apps,
                     ];
-                })->values();
+                })->values()->all();
             } catch (Throwable) {
-                return collect();
+                return [];
             }
         });
+
+        return collect($cached)->map(fn (array $item) => (object) $item);
     }
 
     public function findCampus(string $tenantKey): ?object
